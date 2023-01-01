@@ -21,8 +21,6 @@ print("Tensorflow version = ",tf.__version__)
 trainmeta = pd.read_csv(os.path.join(pathroot,'train.csv'))
 testmeta = pd.read_csv(os.path.join(pathroot,'test.csv'))
 
-
-
 def compute_synthesis(mammocase,height,width,model):
     # Interesting fields from the DICOM metadata
     metathick = 0x001811A0    # breast thickness
