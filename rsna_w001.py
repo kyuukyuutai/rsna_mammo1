@@ -21,7 +21,8 @@ print("Tensorflow version = ",tf.__version__)
 trainmeta = pd.read_csv(os.path.join(pathroot,'train.csv'))
 testmeta = pd.read_csv(os.path.join(pathroot,'test.csv'))
 
-def compute_synthesis(mammocase,height,width,model):
+def compute_synthesis(mammocase_patient_id, mammocase_image_id, mammocase_view, mammocase_laterality, mammocase_implant,\
+    mammocase_cancer,mammocase_difficult_negative_case,mammocase_invasive,mammocase_biopsy,height,width,model):
     # Interesting fields from the DICOM metadata
     metathick = 0x001811A0    # breast thickness
     metacompr = 0x001811A2    # compression force
@@ -35,7 +36,7 @@ def compute_synthesis(mammocase,height,width,model):
     # Catergorial recode
     mammoviewcode = {'CC':0.1,'MLO':0.2,'ML':0.3,'LM':0.4,'LMO':0.5,'AT':0.6,'unknown':1.0}
     mammolatcode = {'L':0.0,'R':1.0,'unknown':0.5}
-    dcmfilename = os.path.join(pathroot,'train_images/',str(mammocase.patient_id),str(mammocase.image_id)+'.dcm')
+    dcmfilename = os.path.join(pathroot,'train_images/',str(mammocase_patient_id),str(mammocase_image_id)+'.dcm')
     dcmobject=dicom.open(dcmfilename)
     bitdepth = dcmobject[metabithigh]
     if bitdepth is None:
@@ -56,15 +57,15 @@ def compute_synthesis(mammocase,height,width,model):
     mammothick = dcmobject[metathick]
     if mammothick is None:
         mammothick = metathick_max/2
-    if mammocase.view in mammoviewcode.keys():
-        mammoview = mammoviewcode[mammocase.view]
+    if mammocase_view in mammoviewcode.keys():
+        mammoview = mammoviewcode[mammocase_view]
     else:
         mammoview = mammoviewcode['unknown']
-    if mammocase.laterality in mammolatcode.keys():
-        mammolat = mammolatcode[mammocase.laterality]
+    if mammocase_laterality in mammolatcode.keys():
+        mammolat = mammolatcode[mammocase_laterality]
     else:
         mammolat = mammolatcode['unknown']
-    metatensor = tf.constant([[mammocompr/metacompr_max,mammothick/metathick_max,mammocase.implant,mammoview,mammolat,mammocase.cancer,mammocase.difficult_negative_case,mammocase.invasive,mammocase.biopsy]])
+    metatensor = tf.constant([[mammocompr/metacompr_max,mammothick/metathick_max,mammocase_implant,mammoview,mammolat,mammocase_cancer,mammocase_difficult_negative_case,mammocase_invasive,mammocase_biopsy]])
     pixoutputtensor = model(dcmpixels,training=False)
     outputtensor = tf.concat([pixoutputtensor,metatensor],axis=1)
     return outputtensor
@@ -90,6 +91,7 @@ class genimg:
         self.valds = trainvalds.iloc[self.valididx]
         self.general_width = width
         self.general_height = height
+        '''
         self.ds_train_series = tf.data.Dataset.from_generator(
             self.gentrain, 
             output_signature=((tf.TensorSpec(shape=[None, None,3], dtype=tf.float32),tf.TensorSpec(shape=[2],dtype=tf.float32)), tf.TensorSpec(shape=(), dtype=tf.float32))
@@ -98,6 +100,7 @@ class genimg:
             self.genval, 
             output_signature=((tf.TensorSpec(shape=[None, None,3], dtype=tf.float32),tf.TensorSpec(shape=[2],dtype=tf.float32)), tf.TensorSpec(shape=(), dtype=tf.float32))
             ).batch(batch_size)
+        '''
 
     def gentrain_fromtensor(self):
         pass
@@ -107,9 +110,12 @@ class genimg:
 
     def make_synthesis_partial(self,model,ds):
         datastack = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
             # Start the load operations and mark each future with its URL
-            future_to_mammocase = {executor.submit(compute_synthesis, mammocase, self.general_height, self.general_width,model): mammocase\
+            future_to_mammocase = {executor.submit(compute_synthesis,\
+                mammocase.patient_id, mammocase.image_id, mammocase.view, mammocase.laterality, mammocase.implant,\
+                mammocase.cancer,mammocase.difficult_negative_case,mammocase.invasive,mammocase.biopsy,\
+                self.general_height, self.general_width,model): mammocase\
                 for mammocase in ds.itertuples()}
             k=0
             for future in concurrent.futures.as_completed(future_to_mammocase):
@@ -139,22 +145,22 @@ class genimg:
         print("Processing train inputs")
         self.synthds_train = self.make_synthesis_partial(model,self.trainds)
         print("Writing train synthesis file as ",synthds_train_filename," shape=",self.synthds_train.shape)
-        with open(synthds_train_filename,'wb') as fp:
+        with open(os.path.join(pathroot,synthds_train_filename),'wb') as fp:
             pickle.dump(self.synthds_train,fp)
 
         # Validation data processing
         print("Processing val inputs")
         self.synthds_val = self.make_synthesis_partial(model,self.valds)
         print("Writing val synthesis file as ",synthds_val_filename," shape=",self.synthds_val.shape)
-        with open(synthds_val_filename,'wb') as fp:
+        with open(os.path.join(pathroot,synthds_val_filename),'wb') as fp:
             pickle.dump(self.synthds_val,fp)
             
     def reload_synthesis(self,synthds_train_filename,synthds_val_filename):
         print("Reloading train synthesis file")
-        with open(synthds_train_filename,'rb') as fp:
+        with open(os.path.join(pathroot,synthds_train_filename),'rb') as fp:
             self.synthds_train = pickle.load(fp)
         print("Reloading val synthesis file")
-        with open(synthds_val_filename,'rb') as fp:
+        with open(os.path.join(pathroot,synthds_val_filename),'rb') as fp:
             self.synthds_val = pickle.load(fp)
 
 ## Data preparation
