@@ -34,7 +34,13 @@ def compute_synthesis(mammocase_patient_id, mammocase_image_id, mammocase_view, 
     metathick_max = 150.0
     pix_max = 16384.0
     # Catergorial recode
-    mammoviewcode = {'CC':0.1,'MLO':0.2,'ML':0.3,'LM':0.4,'LMO':0.5,'AT':0.6,'unknown':1.0}
+    mammoviewcode = {'CC':[1.0,0.0,0.0,0.0,0.0,0.0],
+                    'MLO':[0.0,1.0,0.0,0.0,0.0,0.0],
+                    'ML':[0.0,0.0,1.0,0.0,0.0,0.0],
+                    'LM':[0.0,0.0,0.0,1.0,0.0,0.0],
+                    'LMO':[0.0,0.0,0.0,0.0,1.0,0.0],
+                    'AT':[0.0,0.0,0.0,0.0,0.0,1.0],
+                    'unknwown':[0.0,0.0,0.0,0.0,0.0,0.0]}
     mammolatcode = {'L':0.0,'R':1.0,'unknown':0.5}
 
     dcmfilename = os.path.join(pathroot,'train_images/',str(mammocase_patient_id),str(mammocase_image_id)+'.dcm')
@@ -57,17 +63,26 @@ def compute_synthesis(mammocase_patient_id, mammocase_image_id, mammocase_view, 
     if mammocase_view in mammoviewcode.keys():
         mammoview = mammoviewcode[mammocase_view]
     else:
-        mammoview = mammoviewcode['unknown']
+        mammoview = mammoviewcode['unknownn']
     if mammocase_laterality in mammolatcode.keys():
         mammolat = mammolatcode[mammocase_laterality]
     else:
         mammolat = mammolatcode['unknown']
-    with tf.device('/device:cpu:0'):
+    if mammocase_image_id%10==0:
+        thedevice = '/device:gpu:0'
+    else:
+        thedevice = '/device:cpu:0'
+    
+    with tf.device(thedevice):
         dcmpixels = tf.constant(dcmobject.pixelData())/use_pix_max
         dcmpixels = tf.stack([dcmpixels,dcmpixels,dcmpixels],axis=2)
         dcmpixels = tf.image.resize_with_pad(dcmpixels,height,width)
         dcmpixels = tf.expand_dims(dcmpixels,axis=0)
-        metatensor = tf.constant([[mammocompr/metacompr_max,mammothick/metathick_max,mammocase_implant,mammoview,mammolat,mammocase_cancer,mammocase_difficult_negative_case,mammocase_invasive,mammocase_biopsy]])
+        metalist = [mammocompr/metacompr_max,mammothick/metathick_max,mammocase_implant]
+        metalist += mammoview
+        metalist += [mammolat,mammocase_cancer,mammocase_difficult_negative_case,mammocase_invasive,mammocase_biopsy]
+        metatensor = tf.constant(metalist,dtype=tf.float32)
+        metatensor = tf.expand_dims(metatensor,axis=0)
         pixoutputtensor = model(dcmpixels,training=False)
         outputtensor = tf.concat([pixoutputtensor,metatensor],axis=1)
     return outputtensor
@@ -96,13 +111,12 @@ class genimg:
 
     def make_synthesis_partial(self,ds):
         datastack = []
-        with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
             # Start the load operations and mark each future with its URL
             future_to_mammocase = {executor.submit(compute_synthesis,\
                 mammocase.patient_id, mammocase.image_id, mammocase.view, mammocase.laterality, mammocase.implant,\
                 mammocase.cancer,mammocase.difficult_negative_case,mammocase.invasive,mammocase.biopsy,\
-                self.general_height, self.general_width): mammocase\
-                for mammocase in ds.itertuples()}
+                self.general_height, self.general_width): mammocase for mammocase in ds.itertuples()}
             k=0
             for future in concurrent.futures.as_completed(future_to_mammocase):
                 mammocase = future_to_mammocase[future]
